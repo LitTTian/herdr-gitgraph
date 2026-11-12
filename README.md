@@ -10,6 +10,17 @@ Both panels open like terminals and close like panes. Everything is read-only fo
 details and diffs come from `git log`, `git show` and `git status`, and no command writes under
 `.git`.
 
+## Everything is a panel
+
+This suite replaces the editor-first workflow with panes. In VS Code the editor area owns the
+center and other views — terminal, problems, source control, timelines — are docked to the edges;
+a panel cannot take the editor's place.
+
+In Herdr every surface is a pane. The commit graph, the file tree, the editor, a diff and the
+terminals are all the same kind of object: split the workspace in any direction, put the file
+view or the history graph in the middle, keep a diff beside the code it explains, and close or
+move any of them like a terminal. That is the model this project is built for.
+
 ![Commit graph](docs/images/gitgraph.png)
 
 ![Diff in the editor](docs/images/diff.png)
