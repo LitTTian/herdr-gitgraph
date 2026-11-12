@@ -1,59 +1,93 @@
 # herdr-gitgraph
 
-A git history and file workspace for the [Herdr](https://herdr.dev) app: a commit graph with commit
-details and a changed-file list, plus a file browser and editor that shows the diff of a clicked
-file.
+A mod suite for the [Herdr](https://herdr.dev) app. It adds two panels to the terminal workspace:
+
+- **gitgraph** — a commit graph with the repository's history, commit details, and the changed-file
+  list (including uncommitted worktrees).
+- **ide** — a file browser and editor in one pane, with diffs for files opened from the graph.
+
+Both panels open like terminals and close like panes. Everything is read-only for git: history,
+details and diffs come from `git log`, `git show` and `git status`, and no command writes under
+`.git`.
 
 ![Commit graph](docs/images/gitgraph.png)
 
 ![Diff in the editor](docs/images/diff.png)
 
-| Mod | What it does |
-|---|---|
-| `gitgraph` | History panel: lane graph with branch badges, paging, commit details, changed files. |
-| `ide` | File tree + editor in one pane, with preview tabs, diffs, saving. |
-| `gitgraph-tabs` | Copy of the app's tab bar that opens `ide-new-menu` (see `NOTICE.md`). |
-| `ide-new-menu` | The **+** menu, with **Open IDE here** and **Open GitGraph here**. |
-| `gitgraph-menu` | Terminal right-click menu, with **Open in IDE** and **Open in GitGraph**. |
-| `gitgraph-pane` | Pane header used by the layout: shows a mod pane's folder. |
+## Install
 
-Panels open like terminals — from the **+** menu, a terminal's right-click menu, or `mod.open` —
-and close like panes. The layout in `layout/ide.json` holds terminals only; panels are created on
-demand.
-
-## Behavior
-
-- **History panel**
-  - 19 px rows: lane graph, subject, relative time, short hash.
-  - Branch tips carry a rectangular branch badge; several tips on one commit show the oldest name
-    and `+N`.
-  - Uncommitted worktrees show a dashed node above their HEAD commit.
-  - 200 commits per page; the next page loads when the list reaches its last row. Refreshes keep the
-    loaded depth.
-  - Details: avatar (GitHub photo or initials on the lane color), name/email, date/hash, Markdown
-    message, and the changed-file list.
-  - Changed files switch between a list (name first, directory after) and a grouped tree; the
-    message/list divider drags vertically.
-  - The list keeps 115 px and the details 300 px; below 600 px only the graph is drawn.
-- **Editor**
-  - File tree, one tab per open file, preview tabs (italic) that a click replaces, pinned tabs,
-    unsaved dots, `ctrl-s` to save.
-  - A changed file opens in the IDE of the current tab, or in a new pane below; diff tabs reload
-    themselves when reselected.
-
-## Install and develop
-
-Requires the Herdr app (`herdr-app` on `PATH`) and Node 20+.
+Requirements: the Herdr app (`herdr-app` on `PATH`), a git repository, and Node 20+ for the tests.
+The mods need macOS or Linux; git must understand the repository you open.
 
 ```bash
-just check     # node --test + herdr-app check for every mod
-just sync      # mirror the mods into ~/.config/herdr-app/mods
-just layout    # install layout/ide.json and switch to it
-just keys      # bind cmd-shift-g / cmd-shift-i / ctrl-s
+git clone https://github.com/LitTTian/herdr-gitgraph
+cd herdr-gitgraph
+
+just sync     # copy every mod into ~/.config/herdr-app/mods
+just layout   # install layout/ide.json and switch to it
+just keys     # bind cmd-shift-g / cmd-shift-i, and ctrl-s inside the IDE
 ```
 
-Git is read-only: every command runs with `--no-optional-locks -c core.fsmonitor=false
--c diff.autoRefreshIndex=false`, so folder watch never sees Herdr write under `.git`.
+Without `just`, the steps are:
+
+```bash
+# mods
+for m in gitgraph ide gitgraph-tabs ide-new-menu gitgraph-menu gitgraph-pane; do
+  rm -rf "$HOME/.config/herdr-app/mods/$m"
+  cp -R "mods/$m" "$HOME/.config/herdr-app/mods/$m"
+done
+# layout
+cp layout/ide.json "$HOME/.config/herdr-app/layouts/ide.json"
+herdr-app do layout.switch '{"name":"ide"}'
+# keys
+bash scripts/install-keys.sh
+```
+
+The layout uses the pane header from this repo (`gitgraph-pane`), so the folder of each panel
+appears in the card header. Mods reload when their files change; reopening a panel picks up new code.
+
+## Use
+
+### Open a panel
+
+- **+** button in the tab bar → **Open IDE here** / **Open GitGraph here** (splits beside the
+  focused terminal).
+- Right-click a terminal → **Open in IDE** / **Open in GitGraph**.
+- Commands: `herdr-app do mod.open '{"name":"gitgraph"}'` or `{"name":"ide"}`.
+- Keys: `cmd-shift-g` (gitgraph overlay), `cmd-shift-i` (IDE overlay).
+
+A panel keeps the folder it was created with; moving focus between terminals does not change it.
+
+### gitgraph
+
+- Rows show the lane graph, branch badge, subject, relative time and short hash. 19 px tall.
+- Branch tips carry a badge; several tips on one commit show the oldest branch and `+N`.
+- Uncommitted changes appear as a dashed node above a dirty worktree's HEAD.
+- The list pages 200 commits at a time; the next page loads when you reach the bottom.
+- The right side shows the selected commit: author (avatar, name, email), date and hash, the
+  Markdown message, and the changed files.
+- Changed files switch between **List** (name first, folder after) and **Tree** (folders group the
+  paths, single-child chains collapse like `src/app/widgets/`). `log` opens the file's history.
+- Drag the divider between the list and the details, and the one above the file list.
+- Narrow the panel below 600 px and only the graph column remains.
+
+### ide
+
+- The tree starts at the panel's folder; click a file to open it.
+- A single click opens an italic **preview** tab that the next click replaces; double-click or start
+  editing to pin it.
+- Unsaved edits show a dot; `ctrl-s` saves the active file, `ctrl-shift-s` saves pinned dirty tabs.
+- Clicking a changed file in gitgraph opens its diff here: in the IDE of the current tab, or in a
+  new pane below when the tab has none.
+- Diffs are tabs too: reselecting one reloads `git show`; switch between several without losing
+  them.
+- Drag the divider to resize the tree; collapse it with the sidebar button.
+
+### Layout
+
+`layout/ide.json` is the shipped arrangement: spaces/agents sidebar, tab bar, terminals, status
+bar. The tabs and menus are copies of the app's own, extended with the entries above (see
+`NOTICE.md`). The panels are not layout blocks; they are opened on demand.
 
 ## Specs
 
@@ -69,6 +103,17 @@ The implementation follows these specs (SDD):
 - [07 – Panel layout](specs/07-layout.md)
 - [08 – Performance](specs/08-performance.md)
 
+## Develop
+
+```bash
+just check     # node --test + herdr-app check for every mod
+just sync      # mirror the mods into ~/.config/herdr-app/mods
+just watch     # sync on file changes while developing
+```
+
+Git access is read-only: every command runs with `--no-optional-locks -c core.fsmonitor=false
+-c diff.autoRefreshIndex=false`, so the folder watch never sees Herdr write under `.git`.
+
 ## Status
 
 Implemented: the commit graph and the changed-file list, with commit details, paging, worktree
@@ -76,7 +121,7 @@ markers, and the editor integration needed to view a file's diff.
 
 Not implemented yet: search, branch/tag management, remotes and fetch/pull/push, staging and
 committing, commit actions (cherry-pick, revert, …), blame, file history browsing from arbitrary
-refs, and settings. These are future work; the panels are read-only today.
+refs, and settings.
 
 ## Known issues
 
