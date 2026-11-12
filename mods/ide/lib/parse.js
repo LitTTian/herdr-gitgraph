@@ -15,3 +15,8 @@ export function parseListing(stdout) {
 export function sortEntries(entries) {
   return [...entries].sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1));
 }
+
+// Files the IDE can render as a Markdown preview.
+export function isMarkdownPath(path) {
+  return /\.(md|mdx|markdown)$/i.test(String(path ?? ""));
+}

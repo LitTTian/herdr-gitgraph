@@ -92,6 +92,8 @@ A panel keeps the folder it was created with; moving focus between terminals doe
   new pane below when the tab has none.
 - Diffs are tabs too: reselecting one reloads `git show`; switch between several without losing
   them.
+- A Markdown file shows a **Source/Preview** switch at the top right; preview is read-only and
+  reflects unsaved edits.
 - Drag the divider to resize the tree; collapse it with the sidebar button.
 
 ### Layout

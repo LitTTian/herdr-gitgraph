@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseListing, sortEntries } from "../mods/ide/lib/parse.js";
+import { isMarkdownPath, parseListing, sortEntries } from "../mods/ide/lib/parse.js";
 
 test("parseListing reads NUL-separated kind/name pairs", () => {
   const out = "d\0src\0f\0README.md\0d\0.link-dir\0f\0notes with space.md\0";
@@ -114,4 +114,12 @@ test("double-click pins and reopening promotes without duplicates", () => {
 test("removeTab keeps order and drops the tab", () => {
   const tabs = [{ path: "/a", pinned: true, dirty: false }, { path: "/b", pinned: false, dirty: false }];
   assert.deepEqual(removeTab(tabs, "/a"), [{ path: "/b", pinned: false, dirty: false }]);
+});
+
+test("isMarkdownPath accepts the markdown extensions", () => {
+  assert.equal(isMarkdownPath("README.md"), true);
+  assert.equal(isMarkdownPath("docs/page.mdx"), true);
+  assert.equal(isMarkdownPath("notes.MARKDOWN"), true);
+  assert.equal(isMarkdownPath("src/main.rs"), false);
+  assert.equal(isMarkdownPath(null), false);
 });

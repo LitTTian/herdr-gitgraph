@@ -2,12 +2,12 @@
 // file on the right. No save button: a red dot marks unsaved edits and `ctrl-s` saves
 // (`mod:ide` in keys.json). `props.root` pins the tree, `props.file` opens a file.
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, Scrollbar, Editor, EditorState } from "gpui-base";
+import { v_flex, h_flex, Scrollbar, Editor, EditorState, TextView } from "gpui-base";
 import {
   spaces, panes, focused, home, exec, readTextFile, writeTextFile, theme, settings, props,
   shared, setShared, watchFolder, nextCommand,
 } from "herdr";
-import { parseListing, sortEntries } from "./lib/parse.js";
+import { isMarkdownPath, parseListing, sortEntries } from "./lib/parse.js";
 import { LISTING } from "./lib/listing.js";
 import { splitDiff } from "./lib/diff.js";
 import { openTab, pinTab, setDirty, removeTab } from "./lib/tabs.js";
@@ -74,6 +74,7 @@ export default class Ide extends View {
     this.hoverClose = null;
     this.handle = cx.focus_handle();
     this.diffMode = "unified";
+    this.mdPreview = false;
     const initial = props();
     const where = location();
     // The tree keeps the folder the IDE was created with; focus changes never move it.
@@ -119,6 +120,7 @@ export default class Ide extends View {
           cx.notify();
         } else if (command === "unified" || command === "ide.unified") {
           this.diffMode = "unified";
+    this.mdPreview = false;
           cx.notify();
         }
       }
@@ -163,6 +165,10 @@ export default class Ide extends View {
   }
 
   // Per pane: one IDE collapsing its tree must not collapse the others.
+  mdPreviewMode() {
+    return Boolean(this.file) && !this.diffSpec && isMarkdownPath(this.file);
+  }
+
   collapsed() {
     return this.treeCollapsed === true;
   }
@@ -281,6 +287,7 @@ export default class Ide extends View {
       if (!this.openFiles.some((entry) => entry.path === tab.path)) this.drafts.delete(tab.path);
     }
     this.file = path;
+    this.mdPreview = false;
     this.fileError = null;
     this.note = null;
     this.dirty = false;
@@ -578,6 +585,26 @@ export default class Ide extends View {
           )
           .child(div().flex_1().min_w(0))
           .when(Boolean(this.note), (e) => e.child(div().text_size(10.5).text_color(t.muted).child(this.note)))
+          .when(this.mdPreviewMode(), (e) =>
+            e.child(
+              div()
+                .id("ide-md-mode")
+                .px(6)
+                .py(1)
+                .rounded(4)
+                .border_1()
+                .border_color(t.border)
+                .text_size(10.5)
+                .text_color(t.muted)
+                .cursor_pointer()
+                .hover((chip) => chip.bg(t.hover))
+                .on_click((_e, cx) => {
+                  this.mdPreview = !this.mdPreview;
+                  cx.notify();
+                })
+                .child(this.mdPreview ? "Source" : "Preview"),
+            ),
+          )
           .when(Boolean(diff), (e) =>
             e.child(
               div()
@@ -1002,7 +1029,22 @@ export default class Ide extends View {
           .when(!this.diffSpec && Boolean(this.fileError), (e) =>
             e.child(div().p(12).text_size(12).text_color(t.ansi1).child(this.fileError)),
           )
-          .when(!this.diffSpec && !this.fileError && Boolean(this.code), (e) => e.child(Editor.new(this.code).flex_1().min_h(0)))
+          .when(
+            !this.diffSpec && !this.fileError && this.mdPreview && Boolean(this.code) && this.mdPreviewMode(),
+            (e) =>
+              e.child(
+                div()
+                  .flex_1()
+                  .min_h(0)
+                  .overflow_y_scroll()
+                  .px(14)
+                  .py(10)
+                  .child(TextView.markdown(`ide-md-${this.file}`, this.code.value()).selectable(true)),
+              ),
+          )
+          .when(!this.diffSpec && !this.fileError && Boolean(this.code) && !(this.mdPreview && this.mdPreviewMode()), (e) =>
+            e.child(Editor.new(this.code).flex_1().min_h(0)),
+          )
           .when(!this.diffSpec && !this.fileError && !this.code, (e) =>
             e.child(
               div()
