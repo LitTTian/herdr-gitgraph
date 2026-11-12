@@ -12,9 +12,6 @@ src="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 app_home="${HERDR_APP_HOME:-$HOME/.config/herdr-app}"
 app_bin="${HERDR_APP_BIN:-$(command -v herdr-app || echo "$HOME/.local/bin/herdr-app")}"
 
-# Names this project used before the mods were merged.
-rm -rf "$app_home/mods/gitlens" "$app_home/mods/browser" "$app_home/mods/editor"
-
 for name in gitgraph ide gitgraph-tabs ide-new-menu gitgraph-menu gitgraph-pane; do
   dest="$app_home/mods/$name"
   rm -rf "$dest"
