@@ -1,0 +1,9 @@
+{
+  "place": "none",
+  "focusable": true,
+  "overlay": {
+    "kind": "dialog",
+    "width": 1180,
+    "height": 0.85
+  }
+}
