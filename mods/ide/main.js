@@ -43,6 +43,12 @@ function languageOf(path) {
   return LANG[ext] ?? ext;
 }
 
+function hashText(text) {
+  let hash = 5381;
+  for (const ch of String(text ?? "")) hash = ((hash * 33) ^ ch.codePointAt(0)) >>> 0;
+  return hash.toString(16);
+}
+
 export default class Ide extends View {
   init(_props, cx) {
     this.context = null;
@@ -120,7 +126,6 @@ export default class Ide extends View {
           cx.notify();
         } else if (command === "unified" || command === "ide.unified") {
           this.diffMode = "unified";
-    this.mdPreview = false;
           cx.notify();
         }
       }
@@ -1039,7 +1044,10 @@ export default class Ide extends View {
                   .overflow_y_scroll()
                   .px(14)
                   .py(10)
-                  .child(TextView.markdown(`ide-md-${this.file}`, this.code.value()).selectable(true)),
+                  .child(
+                    TextView.markdown(`ide-md-${hashText(this.file + this.code.value())}`, this.code.value())
+                      .selectable(true),
+                  ),
               ),
           )
           .when(!this.diffSpec && !this.fileError && Boolean(this.code) && !(this.mdPreview && this.mdPreviewMode()), (e) =>
