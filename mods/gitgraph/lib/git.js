@@ -1,6 +1,16 @@
 // Host-facing git reads. The only module that imports the app's `herdr` host module.
-import { exec } from "herdr";
-import { LOG_FORMAT, parseBranches, parseLog, parseNumstat, parseShowMeta, parseWorktrees, META_FORMAT } from "./parse.js";
+import { exec, window } from "herdr";
+import {
+  LOG_FORMAT,
+  parseBranches,
+  parseLog,
+  parseNumstat,
+  parseShowMeta,
+  parseStatusCounts,
+  parseStatusPaths,
+  parseWorktrees,
+  META_FORMAT,
+} from "./parse.js";
 
 // Reading git must not write under .git: the folder watch would see it and refresh forever.
 const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false"];
@@ -43,6 +53,71 @@ export async function loadBranches(root, on) {
     timeout: 15000,
   });
   return result.code === 0 ? parseBranches(result.stdout) : [];
+}
+
+// git status only reports paths; the node's timestamp is the newest mtime among them.
+let statArgs = null;
+function statFlags() {
+  if (!statArgs) {
+    try {
+      statArgs = window().platform === "linux" ? ["-c", "%Y"] : ["-f", "%m"];
+    } catch {
+      statArgs = ["-f", "%m"];
+    }
+  }
+  return statArgs;
+}
+
+// One stat call for the whole worktree: paths can number in the thousands, processes cannot.
+async function maxMtime(paths, on) {
+  if (!paths.length) return 0;
+  try {
+    const result = await exec("stat", [...statFlags(), ...paths], { on, timeout: 10000 });
+    return result.stdout
+      .split("\n")
+      .reduce((latest, line) => Math.max(latest, Number(line.trim()) || 0), 0);
+  } catch {
+    return 0;
+  }
+}
+
+export async function worktreeStats(root, on) {
+  const worktrees = await loadWorktrees(root, on);
+  const rows = [];
+  for (const worktree of worktrees) {
+    let counts = { added: 0, modified: 0, deleted: 0 };
+    let files = [];
+    try {
+      const status = await git(["status", "--porcelain=v1", "-z", "--untracked-files=all"], {
+        cwd: worktree.path,
+        on,
+        timeout: 15000,
+      });
+      if (status.code === 0) {
+        counts = parseStatusCounts(status.stdout);
+        files = parseStatusPaths(status.stdout);
+      }
+    } catch {
+      // A missing or moved worktree shows an empty node.
+    }
+    // A huge untracked tree is not worth waiting for; the first 100 paths decide the time.
+    const tail = worktree.path.endsWith("/") ? "" : "/";
+    const mtime = await maxMtime(
+      files.slice(0, 100).map((file) => `${worktree.path}${tail}${file.path}`),
+      on,
+    );
+    rows.push({
+      path: worktree.path,
+      head: worktree.head,
+      branch: worktree.branch,
+      added: counts.added,
+      modified: counts.modified,
+      deleted: counts.deleted,
+      mtime,
+      files,
+    });
+  }
+  return rows;
 }
 
 export async function loadWorktrees(root, on) {

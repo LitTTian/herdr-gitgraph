@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { branchLabel, parseBranches, parseLog, parseRefs, parseNumstat, parseShowMeta, parseWorktrees, relativeTime } from "../mods/gitgraph/lib/parse.js";
+import { branchLabel, parseBranches, parseLog, parseRefs, parseNumstat, parseShowMeta, parseStatusCounts, parseWorktrees, relativeTime } from "../mods/gitgraph/lib/parse.js";
 
 const US = "\x1f";
 const RS = "\x1e";
@@ -203,10 +203,28 @@ test("layoutGraph keeps the active branch in lane 0", () => {
   );
   assert.equal(rows[0].lane, 1);
   assert.equal(rows[1].lane, 0);
-  // The shared ancestor keeps its own lane; the lane the active branch awaited it in is the one
-  // that ends at that row (drawn as an approach into the node).
-  assert.equal(rows[2].lane, 1);
+  // The shared ancestor is part of the active history, so it keeps lane 0; the other branch
+  // approaches it from lane 1.
+  assert.equal(rows[2].lane, 0);
   assert.equal(rows[2].before[0], "base");
+  assert.equal(rows[2].before[1], "base");
+});
+
+test("layoutGraph never reuses lane 0 after the active branch ends", () => {
+  const rows = layout(
+    [
+      { sha: "a1", parents: ["a2"], at: 400 },
+      { sha: "a2", parents: [], at: 300 },
+      { sha: "b1", parents: ["b2"], at: 200 },
+      { sha: "b2", parents: [], at: 100 },
+    ],
+    8,
+    "a1",
+  );
+  assert.equal(rows[0].lane, 0);
+  assert.equal(rows[1].lane, 0);
+  assert.notEqual(rows[2].lane, 0);
+  assert.notEqual(rows[3].lane, 0);
 });
 
 test("rowLaneWidth follows the lanes a row actually uses", () => {
@@ -233,4 +251,38 @@ test("avatarUrl prefers GitHub, otherwise the email local part", () => {
   assert.equal(avatarUrl("alice@example.com"), "https://github.com/alice.png?size=64");
   assert.equal(avatarUrl(""), null);
   assert.equal(avatarKey("alice@example.com"), avatarKey("alice@example.com"));
+});
+
+test("parseStatusCounts handles untracked, added, modified, deleted and renames", () => {
+  const text = [
+    "?? new.txt",
+    "A  added.txt",
+    " M modified.txt",
+    " D deleted.txt",
+    "R  new-name.txt",
+    "old-name.txt",
+    "",
+  ].join("\0");
+  assert.deepEqual(parseStatusCounts(text), { added: 2, modified: 2, deleted: 1 });
+});
+
+test("layoutGraph keeps the active tip's lane when another branch waits on it", () => {
+  const rows = layout(
+    [
+      { sha: "x", parents: ["p"], at: 600 },
+      { sha: "y", parents: ["tip"], at: 500 },
+      { sha: "tip", parents: ["base"], at: 400 },
+      { sha: "base", parents: [], at: 300 },
+      { sha: "q", parents: [], at: 200 },
+      { sha: "p", parents: [], at: 100 },
+    ],
+    8,
+    "tip",
+  );
+  const mainline = new Set(["tip", "base"]);
+  assert.deepEqual(
+    rows.filter((row) => mainline.has(row.sha)).map((row) => row.lane),
+    [0, 0],
+  );
+  assert.ok(rows.filter((row) => !mainline.has(row.sha)).every((row) => row.lane !== 0));
 });

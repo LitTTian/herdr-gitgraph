@@ -5,16 +5,51 @@
 
 export const MAX_LANES = 8;
 
+function freeLane(lanes, start, reserved = null) {
+  for (let lane = start; lane < lanes.length; lane++) {
+    if (lane !== reserved && lanes[lane] == null) return lane;
+  }
+  let lane = Math.max(lanes.length, start);
+  if (lane === reserved) lane += 1;
+  return lane;
+}
+
+// The checked-out branch is its first-parent chain: the walk that keeps the leftmost lane.
+function mainlineShas(commits, tip) {
+  if (!tip) return null;
+  const bySha = new Map(commits.map((commit) => [commit.sha, commit]));
+  if (!bySha.has(tip)) return null;
+  const seen = new Set();
+  let sha = tip;
+  while (sha && bySha.has(sha) && !seen.has(sha)) {
+    seen.add(sha);
+    sha = bySha.get(sha).parents?.[0] ?? null;
+  }
+  return seen;
+}
+
 export function layoutGraph(commits, maxLanes = MAX_LANES, activeTip = null) {
   const lanes = []; // lane index -> sha expected next, or null
   const rows = [];
+  // The first-parent chain of the checked-out branch owns its lane; no other commit may take it.
+  const mainline = mainlineShas(commits, activeTip);
+  let mainLane = null;
 
   for (const commit of commits) {
-    let lane = lanes.indexOf(commit.sha);
-    if (lane < 0) {
-      lane = lanes.findIndex((value) => value == null);
-      if (lane < 0) lane = lanes.length;
+    const isMain = Boolean(mainline?.has(commit.sha));
+    let lane;
+    if (isMain && mainLane == null) {
+      // The tip gets a fresh slot: a lane another branch already waits in stays that branch's,
+      // so the reserved lane cannot leak back to it through the left-to-right renumbering.
+      lane = lanes.length;
+    } else if (isMain && lanes[mainLane] === commit.sha) {
+      lane = mainLane;
+    } else {
+      lane = lanes.indexOf(commit.sha);
     }
+    if (lane < 0) lane = freeLane(lanes, 0, isMain ? null : mainLane);
+    // The lane is reserved as soon as the tip takes it, before any merge slot is allocated.
+    if (isMain && mainLane == null) mainLane = lane;
     const before = lanes.slice();
 
     // A commit can be awaited by several lanes (a branch tip and a merge source).
@@ -28,13 +63,13 @@ export function layoutGraph(commits, maxLanes = MAX_LANES, activeTip = null) {
     const merges = [];
     for (const parent of parents.slice(1)) {
       if (lanes.includes(parent)) continue;
-      let slot = lanes.findIndex((value) => value == null);
-      if (slot < 0) slot = lanes.length;
+      const slot = freeLane(lanes, 0, mainLane);
       lanes[slot] = parent;
       merges.push(slot);
     }
 
-    while (lanes.length && lanes[lanes.length - 1] == null) lanes.pop();
+    // Keep the reserved lane real: a trailing hole there must not be popped and later reused.
+    while (lanes.length && lanes[lanes.length - 1] == null && lanes.length - 1 !== mainLane) lanes.pop();
 
     rows.push({ sha: commit.sha, lane, before, after: lanes.slice(), merges });
   }
@@ -66,11 +101,12 @@ export function layoutGraph(commits, maxLanes = MAX_LANES, activeTip = null) {
   return rows.map((row) => {
     const before = [];
     row.before.forEach((value, lane) => {
-      before[move(lane)] = value;
+      // A hole moved onto another lane would erase that lane's sha; only real entries move.
+      if (value != null) before[move(lane)] = value;
     });
     const after = [];
     row.after.forEach((value, lane) => {
-      after[move(lane)] = value;
+      if (value != null) after[move(lane)] = value;
     });
     // Every row is permuted the same way; keeping one row's lane in sync by hand would break
     // the invariant that row.after[l] equals the next row's before[l].

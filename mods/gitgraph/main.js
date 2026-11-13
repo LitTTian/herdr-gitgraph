@@ -19,7 +19,6 @@ import {
 } from "herdr";
 import {
   COMMIT_LIMIT,
-  countChanged,
   currentBranch,
   findRepo,
   headSha,
@@ -27,7 +26,7 @@ import {
   loadCommit,
   loadCommits,
   loadFileCommits,
-  loadWorktrees,
+  worktreeStats,
 } from "./lib/git.js";
 import { branchLabel, relativeTime } from "./lib/parse.js";
 import { layoutGraph, rowLaneWidth } from "./lib/graph.js";
@@ -80,6 +79,7 @@ export default class GitGraph extends View {
     this.branch = null;
     this.commits = [];
     this.selected = null;
+    this.selectedWorktree = null;
     this.details = null;
     this.loading = false;
     this.detailsLoading = false;
@@ -115,7 +115,7 @@ export default class GitGraph extends View {
     this.scrollTop = 0;
     this.offset = 0;
     this.viewportH = 0;
-    this.uncommitted = [];
+    this.worktreeRows = [];
     this.activeTip = null;
     this.tips = new Map();
     this.avatars = new Map();
@@ -222,13 +222,7 @@ export default class GitGraph extends View {
       }),
     );
     if (this.avatars.size && this.lanes && this.commits.length) {
-      await this.prepareRows(
-        this.commits,
-        this.lanes,
-        theme(),
-        cx,
-        new Set(this.uncommitted.map((entry) => entry.sha)),
-      );
+      await this.prepareRows(this.commits, this.lanes, theme(), cx, this.connectSet(this.entries), this.dashMap(this.entries));
     }
   }
 
@@ -254,13 +248,7 @@ export default class GitGraph extends View {
         this.hasMore = page.length >= limit && grown;
         this.lanes = layoutGraph(this.commits, undefined, this.activeTip);
         this.entries = this.buildEntries();
-        await this.prepareRows(
-          this.commits,
-          this.lanes,
-          theme(),
-          cx,
-          new Set(this.uncommitted.map((entry) => entry.sha)),
-        );
+        await this.prepareRows(this.commits, this.lanes, theme(), cx, this.connectSet(this.entries), this.dashMap(this.entries));
       } catch (e) {
         this.note = `Load more failed: ${String(e?.message ?? e)}`;
       } finally {
@@ -303,7 +291,7 @@ export default class GitGraph extends View {
       this.on = target.on ?? null;
       this.filePath = target.file ?? null;
       this.repoCommits = [];
-      this.uncommitted = [];
+      this.worktreeRows = [];
       this.activeTip = null;
       this.tips = new Map();
       this.avatars = new Map();
@@ -345,6 +333,8 @@ export default class GitGraph extends View {
         this.commits = this.filePath ? fileCommits : commits;
         this.rowPaths = new Map();
         this.rowWidths = new Map();
+        this.rowConnect = new Map();
+        this.rowDash = new Map();
         this.offset = this.filePath ? fileCommits.length : commits.length;
         this.hasMore = this.offset >= limit && this.offset >= PAGE;
         this.scrollTop = 0;
@@ -366,31 +356,29 @@ export default class GitGraph extends View {
             list.sort((a, b) => a.at - b.at || a.name.localeCompare(b.name));
           }
         }
-        this.uncommitted = [];
+        this.worktreeRows = [];
         if (!this.filePath) {
-          const worktrees = await loadWorktrees(root, target.on);
+          const stats = await worktreeStats(root, target.on);
           if (!current()) return;
-          const shas = new Set(commits.map((commit) => commit.sha));
-          const pending = [];
-          for (const worktree of worktrees) {
-            if (!worktree.head || !shas.has(worktree.head)) continue;
-            const count = await countChanged(worktree.path, target.on);
-            if (!current()) return;
-            if (count > 0) pending.push({ sha: worktree.head, count, branch: worktree.branch });
+          this.worktreeRows = stats.map((entry) => ({
+            ...entry,
+            current: entry.path === root || (Boolean(branch) && entry.branch === branch),
+          }));
+          if (this.selectedWorktree) {
+            const fresh = this.worktreeRows.find((row) => row.path === this.selectedWorktree);
+            if (!fresh) {
+              this.selectedWorktree = null;
+              this.details = null;
+            } else if (this.details?.kind === "worktree") {
+              this.details = { kind: "worktree", worktree: fresh, files: fresh.files ?? [] };
+            }
           }
-          this.uncommitted = pending;
         }
         if (!current()) return;
         const lanes = layoutGraph(this.commits, undefined, this.activeTip);
         this.lanes = lanes;
         this.entries = this.buildEntries();
-        await this.prepareRows(
-          this.commits,
-          lanes,
-          theme(),
-          cx,
-          new Set(this.uncommitted.map((entry) => entry.sha)),
-        );
+        await this.prepareRows(this.commits, lanes, theme(), cx, this.connectSet(this.entries), this.dashMap(this.entries));
         this.empty = this.commits.length
           ? null
           : this.filePath
@@ -399,7 +387,7 @@ export default class GitGraph extends View {
         this.error = null;
         this.note = null;
         this.watch(root, target.on, cx);
-        if (!this.selected || !this.commits.some((commit) => commit.sha === this.selected)) {
+        if (!this.selectedWorktree && (!this.selected || !this.commits.some((commit) => commit.sha === this.selected))) {
           const wanted = this.initialSha
             ? this.commits.find(
                 (commit) =>
@@ -426,14 +414,119 @@ export default class GitGraph extends View {
   }
 
   select(sha, cx) {
-    if (!this.root || this.selected === sha) return;
+    if (!this.root || (this.selected === sha && !this.selectedWorktree)) return;
     this.selected = sha;
+    this.selectedWorktree = null;
     this.details = null;
     cx.notify();
     cx.spawn(async (cx) => {
       await this.loadDetails(sha, this.context, this.root, this.on);
       cx.notify();
     });
+  }
+
+  selectWorktree(index, cx) {
+    const entry = this.entries?.[index];
+    if (!entry || entry.kind !== "worktree" || !this.root) return;
+    const worktree = entry.worktree;
+    if (this.selectedWorktree === worktree.path) return;
+    this.selectedWorktree = worktree.path;
+    this.selected = null;
+    this.detailsLoading = false;
+    this.details = {
+      kind: "worktree",
+      worktree,
+      files: worktree.files ?? [],
+    };
+    cx.notify();
+  }
+
+  worktreeBlock(details, t) {
+    const worktree = details.worktree ?? {};
+    const line = (label, value) =>
+      h_flex()
+        .gap(8)
+        .items_center()
+        .text_size(11.5)
+        .child(div().w(70).flex_none().text_color(t.dim).child(label))
+        .child(div().min_w(0).truncate().text_color(t.foreground).child(value));
+    return v_flex()
+      .h(this.detailsHeight)
+      .flex_none()
+      .min_h(0)
+      .overflow_y_scroll()
+      .border_b(1)
+      .border_color(t.border)
+      .p(12)
+      .gap(6)
+      .child(
+        h_flex()
+          .gap(8)
+          .items_center()
+          .child(
+            div()
+              .text_size(13)
+              .font_semibold()
+              .child(worktree.current ? "Working tree changes" : "Worktree changes"),
+          )
+          .when(Boolean(worktree.branch), (e) =>
+            e.child(
+              div()
+                .px(6)
+                .py(1)
+                .rounded(4)
+                .bg(t.raised)
+                .text_size(10.5)
+                .text_color(t.accent)
+                .child(worktree.branch ?? ""),
+            ),
+          ),
+      )
+      .child(line("Path", String(worktree.path ?? "")))
+      .child(line("HEAD", String(worktree.head ?? "").slice(0, 7)))
+      .child(line("Changes", `+${worktree.added ?? 0}  ~${worktree.modified ?? 0}  -${worktree.deleted ?? 0}`))
+      .when(Boolean(worktree.mtime), (e) =>
+        e.child(line("Latest", relativeTime(worktree.mtime, Math.floor(Date.now() / 1000)))),
+      );
+  }
+
+  worktreeFiles(details, t) {
+    const files = details.files ?? [];
+    const color = (status) =>
+      status === "A" || status === "U" ? t.ansi2 : status === "D" ? t.ansi1 : status === "R" ? t.ansi4 : t.ansi3;
+    return v_flex()
+      .flex_1()
+      .min_h(0)
+      .child(
+        h_flex()
+          .h(26)
+          .flex_none()
+          .px(14)
+          .gap(6)
+          .items_center()
+          .text_size(10.5)
+          .text_color(t.dim)
+          .child(`${files.length} ${files.length === 1 ? "file" : "files"} changed`),
+      )
+      .child(
+        v_flex()
+          .flex_1()
+          .min_h(0)
+          .overflow_y_scroll()
+          .children(
+            files.map((file) =>
+              h_flex()
+                .h(20)
+                .flex_none()
+                .px(14)
+                .gap(8)
+                .items_center()
+                .text_size(11)
+                .child(div().w(12).flex_none().text_color(color(file.status)).child(file.status))
+                .child(div().flex_1().min_w(0).truncate().child(String(file.path))),
+            ),
+          ),
+      );
   }
 
   async loadDetails(sha, context, root, on) {
@@ -580,7 +673,7 @@ export default class GitGraph extends View {
   // so it covers the junctions instead of meeting them at a curved edge.
   // One SVG per row: every stroke shares a coordinate system, and the avatar is painted last,
   // so it covers the junctions instead of meeting them at a curved edge.
-  rowSvg(row, t, connectTop, commit, photo) {
+  rowSvg(row, t, connectTop, commit, photo, dashLane = null) {
     const lanes = Math.max(1, rowLaneWidth(row));
     const pitch = LANE_PX + 4;
     const pad = 2; // keep the end avatars inside the viewBox
@@ -631,8 +724,12 @@ export default class GitGraph extends View {
         paths.push(`<path d="M${nodeX} ${mid} H${endX}" stroke="${stroke}" stroke-width="2" fill="none"/>`);
       }
     }
-    const vline = (x, y1, y2, stroke) =>
-      paths.push(`<path d="M${x} ${y1} V${y2}" stroke="${stroke}" stroke-width="2" fill="none"/>`);
+    const vline = (x, y1, y2, stroke, dash) =>
+      paths.push(
+        `<path d="M${x} ${y1} V${y2}" stroke="${stroke}" stroke-width="2" fill="none"` +
+          (dash ? ' stroke-dasharray="2 2"' : "") +
+          "/>",
+      );
     for (let lane = 0; lane < lanes; lane++) {
       const x = center(lane);
       const above = row.before[lane] != null || (lane === row.lane && connectTop);
@@ -640,12 +737,19 @@ export default class GitGraph extends View {
       if (lane === row.lane) {
         const stub = (COMMIT_ROW - AVATAR) / 2 + 2;
         // Stubs reach 2 px inside the circle, which is painted later and hides the joint.
-        if (above) vline(x, -2, stub, color(lane));
+        // The worktree node above this commit links with a dashed line, not a solid one.
+        if (above) {
+          const dashed = connectTop && row.before[lane] == null;
+          vline(x, dashed ? 0 : -2, stub, color(lane), dashed);
+        }
         if (below) vline(x, COMMIT_ROW - stub, COMMIT_ROW + 2, color(lane));
         continue;
       }
       if (turnOf(lane)) continue;
       if (above || below) vline(x, -2, COMMIT_ROW + 2, color(lane));
+    }
+    if (dashLane != null) {
+      vline(center(dashLane), -2, COMMIT_ROW + 2, color(dashLane), true);
     }
     const r = AVATAR / 2;
     const cy = mid;
@@ -677,7 +781,7 @@ export default class GitGraph extends View {
     return { svgText, width, key };
   }
 
-  async prepareRows(commits, lanes, t, cx, pendingShas = new Set()) {
+  async prepareRows(commits, lanes, t, cx, connectShas = new Set(), dashShas = new Map()) {
     const dir = `${appHome()}/cache/gitgraph`;
     try {
       await exec("mkdir", ["-p", dir], { timeout: 4000 });
@@ -686,16 +790,25 @@ export default class GitGraph extends View {
     }
     const nextPaths = new Map();
     const nextWidths = new Map();
+    const nextConnect = new Map();
+    const nextDash = new Map();
     await Promise.all(
       commits.map(async (commit, index) => {
-        const waiting = pendingShas.has(commit.sha);
-        if (!waiting && this.rowPaths.has(commit.sha)) {
+        const connect = connectShas.has(commit.sha);
+        const dash = dashShas.get(commit.sha) ?? null;
+        if (
+          this.rowPaths.has(commit.sha) &&
+          this.rowConnect?.get(commit.sha) === connect &&
+          (this.rowDash?.get(commit.sha) ?? null) === dash
+        ) {
           nextPaths.set(commit.sha, this.rowPaths.get(commit.sha));
           nextWidths.set(commit.sha, this.rowWidths.get(commit.sha));
+          nextConnect.set(commit.sha, connect);
+          if (dash != null) nextDash.set(commit.sha, dash);
           return;
         }
         const photo = await this.avatarBase64(commit.email);
-        const { svgText, width, key } = this.rowSvg(lanes[index], t, waiting, commit, photo);
+        const { svgText, width, key } = this.rowSvg(lanes[index], t, connect, commit, photo, dash);
         const name = `r-${this.hashText(key)}.svg`;
         const rel = `cache/gitgraph/${name}`;
         if (!this.svgFiles.has(rel)) {
@@ -718,10 +831,14 @@ export default class GitGraph extends View {
         }
         nextPaths.set(commit.sha, rel);
         nextWidths.set(commit.sha, width);
+        nextConnect.set(commit.sha, connect);
+        if (dash != null) nextDash.set(commit.sha, dash);
       }),
     );
     this.rowPaths = nextPaths;
     this.rowWidths = nextWidths;
+    this.rowConnect = nextConnect;
+    this.rowDash = nextDash;
     cx.notify();
   }
 
@@ -730,28 +847,101 @@ export default class GitGraph extends View {
     this.entries = this.buildEntries();
     this.rowPaths = new Map();
     this.rowWidths = new Map();
+    this.rowConnect = new Map();
+    this.rowDash = new Map();
     this.rowSignature = null;
     if (!this.commits.length) return;
     const commits = this.commits;
     const lanes = this.lanes;
     cx?.spawn?.(async (cx) => {
-      await this.prepareRows(commits, lanes, theme(), cx, new Set(this.uncommitted.map((e) => e.sha)));
+      await this.prepareRows(commits, lanes, theme(), cx, this.connectSet(this.entries), this.dashMap(this.entries));
     });
+  }
+
+  dashMap(entries) {
+    const lanes = new Map();
+    for (const entry of entries ?? []) {
+      if (entry.kind === "commit" && entry.dashLane != null) lanes.set(entry.sha, entry.dashLane);
+    }
+    return lanes;
+  }
+
+  connectSet(entries) {
+    return new Set(
+      (entries ?? []).filter((entry) => entry.kind === "commit" && entry.connectTop).map((entry) => entry.sha),
+    );
   }
 
   buildEntries() {
     const lanes = this.lanes?.length === this.commits.length ? this.lanes : null;
     const empty = { lane: 0, before: [], after: [], merges: [] };
-    const pending = new Map((this.uncommitted ?? []).map((entry) => [entry.sha, entry]));
     this.laneBySha = new Map();
-    const entries = [];
+    const commits = [];
     for (let i = 0; i < this.commits.length; i++) {
       const commit = this.commits[i];
       const row = lanes?.[i] ?? empty;
       this.laneBySha.set(commit.sha, row.lane ?? 0);
-      const waiting = pending.get(commit.sha);
-      if (waiting) entries.push({ kind: "pending", sha: commit.sha, pending: waiting, row });
-      entries.push({ kind: "commit", sha: commit.sha, commit, row, connectTop: Boolean(waiting) });
+      commits.push({ kind: "commit", sha: commit.sha, row, commit });
+    }
+    // A worktree node draws the lanes that already pass through its row, so other branches'
+    // lines stay continuous instead of being cut by the node.
+    const laneState = (row) => [...(row?.before ?? [])];
+    const rowFor = (lane, state) => ({ lane, before: state, after: state, merges: [] });
+    const top = [];
+    const beforeCommit = new Map();
+    const now = Math.floor(Date.now() / 1000);
+    for (const worktree of this.worktreeRows ?? []) {
+      const node = { kind: "worktree", key: `w-${worktree.path}`, worktree, at: 0 };
+      if (worktree.current) {
+        // Uncommitted changes are newer than every commit, so this node stays on top.
+        top.push({ ...node, at: now, row: rowFor(0, laneState(commits[0]?.row)) });
+        continue;
+      }
+      const head = this.commits.findIndex((commit) => commit.sha === worktree.head);
+      const lane = this.laneBySha.get(worktree.head) ?? 0;
+      const state = laneState(commits[head]?.row);
+      // Other worktrees sit directly above their own HEAD commit.
+      if (head >= 0) {
+        const list = beforeCommit.get(head) ?? [];
+        list.push({ ...node, at: worktree.mtime || now, row: rowFor(lane, state) });
+        beforeCommit.set(head, list);
+      } else {
+        top.push({ ...node, at: worktree.mtime || now, row: rowFor(lane, state) });
+      }
+    }
+    const entries = [...top];
+    for (let i = 0; i < commits.length; i++) {
+      for (const extra of beforeCommit.get(i) ?? []) entries.push(extra);
+      const commitEntry = commits[i];
+      entries.push(commitEntry);
+      const last = entries[entries.length - 2];
+      // The dashed link only exists when the node is directly above this commit in its lane.
+      commitEntry.connectTop = Boolean(
+        last && last.kind === "worktree" && last.row?.lane === commitEntry.row?.lane,
+      );
+    }
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      if (entry.kind !== "worktree") continue;
+      const next = entries[i + 1];
+      entry.link = Boolean(
+        next && next.kind === "commit" && entry.row?.lane === next.row?.lane && next.connectTop,
+      );
+    }
+    // The checked-out node stays on top even when another branch has newer commits: its dashed
+    // link then runs down lane 0 through the rows above its own HEAD.
+    const activeIndex = entries.findIndex((entry) => entry.kind === "worktree" && entry.worktree.current);
+    if (activeIndex >= 0) {
+      const node = entries[activeIndex];
+      const headIndex = entries.findIndex(
+        (entry, index) => index > activeIndex && entry.kind === "commit" && entry.sha === node.worktree.head,
+      );
+      if (headIndex > activeIndex) {
+        for (let i = activeIndex + 1; i < headIndex; i++) entries[i].dashLane = node.row.lane;
+        const head = entries[headIndex];
+        head.connectTop = head.row?.lane === node.row.lane;
+        node.link = head.connectTop;
+      }
     }
     return entries;
   }
@@ -960,66 +1150,6 @@ export default class GitGraph extends View {
     return h_flex().h(COMMIT_ROW).flex_none().items_center().children(children);
   }
 
-  uncommittedRow(t, nodeLane, count, branch, row) {
-    const width = Math.max(1, rowLaneWidth(row));
-    const laneColor = (lane) => t[LANE_COLORS[lane % LANE_COLORS.length]] ?? t.muted;
-    const cells = [];
-    for (let lane = 0; lane < width; lane++) {
-      const cell = div().w(LANE_PX).h(COMMIT_ROW).flex_none().flex().items_center().justify_center();
-      // The dashed row sits above the commit: only lanes already present above it continue.
-      const crossing = row && row.before[lane] != null;
-      if (lane === nodeLane) {
-        cell.child(
-          v_flex()
-            .h(COMMIT_ROW)
-            .items_center()
-            .child(
-              div()
-                .w(2)
-                .h((COMMIT_ROW - AVATAR) / 2)
-                .when(row && row.before[nodeLane] != null, (e) => e.bg(laneColor(nodeLane))),
-            )
-            .child(
-              div()
-                .size(AVATAR)
-                .rounded(AVATAR / 2)
-                .border_1()
-                .border_dashed()
-                .border_color(t.blocked)
-                .bg(t.background),
-            )
-            .child(div().w(2).h((COMMIT_ROW - AVATAR) / 2).bg(t.blocked)),
-        );
-      } else if (crossing) {
-        cell.child(div().w(2).h(COMMIT_ROW).bg(laneColor(lane)));
-      }
-      cells.push(cell);
-      if (lane < width - 1) cells.push(div().w(4).h(COMMIT_ROW).flex_none());
-    }
-    return h_flex()
-      .h(COMMIT_ROW)
-      .flex_none()
-      .px(8)
-      .gap(6)
-      .items_center()
-      .child(h_flex().h(COMMIT_ROW).flex_none().children(cells))
-      .child(
-        div()
-          .flex_1()
-          .min_w(0)
-          .truncate()
-          .text_size(11.5)
-          .text_color(t.muted)
-          .child(branch ? `Uncommitted changes · ${branch}` : "Uncommitted changes"),
-      )
-      .child(
-        div()
-          .text_size(9.5)
-          .text_color(t.dim)
-          .child(`${count} file${count === 1 ? "" : "s"}`),
-      );
-  }
-
   branchBadge(tips, lane, t) {
     const primary = tips[0];
     const others = tips.slice(1).map((entry) => entry.name);
@@ -1037,6 +1167,82 @@ export default class GitGraph extends View {
       .text_color(color)
       .child(div().flex_none().child(branchLabel(primary.name, 32)))
       .when(others.length > 0, (e) => e.child(div().flex_none().text_size(9).text_color(t.dim).child(`+${others.length}`)));
+  }
+  worktreeRow(t, worktree, row, now, at, connect, dashLane = null) {
+    const lane = row?.lane ?? 0;
+    const width = Math.max(1, rowLaneWidth(row));
+    const laneColor = (index) => t[LANE_COLORS[index % LANE_COLORS.length]] ?? t.muted;
+    const dirty = (worktree.added ?? 0) + (worktree.modified ?? 0) + (worktree.deleted ?? 0) > 0;
+    const cells = [];
+    for (let index = 0; index < width; index++) {
+      const cell = div().w(LANE_PX).h(COMMIT_ROW).flex_none().flex().items_center().justify_center();
+      if (index === lane) {
+        const node = div()
+          .size(13)
+          .rounded(6.5)
+          .border_1()
+          .border_dashed()
+          .border_color(laneColor(lane))
+          .bg(t.background)
+          .flex()
+          .items_center()
+          .justify_center();
+        // GitLens marks a dirty worktree with a solid dot inside the dashed ring.
+        if (dirty) node.child(div().size(5).rounded(2.5).bg(laneColor(lane)));
+        const dash = v_flex()
+          .items_center()
+          .child(div().h(1).flex_none())
+          .child(div().w(2).h(2).flex_none().bg(laneColor(lane)));
+        cell.child(v_flex().items_center().child(node).when(connect, (e) => e.child(dash)));
+      } else if (index === dashLane) {
+        // The active branch's dashed link runs through rows that belong to other branches.
+        cell.child(
+          v_flex()
+            .h(COMMIT_ROW)
+            .items_center()
+            .children(
+              Array.from({ length: 5 }, (_, step) =>
+                v_flex()
+                  .items_center()
+                  .child(div().w(2).h(2).flex_none().bg(laneColor(index)))
+                  .when(step < 4, (e) => e.child(div().w(2).h(2).flex_none())),
+              ),
+            ),
+        );
+      } else if (row?.before?.[index] != null) {
+        // A lane passing through this row keeps its line, so the node never hides another branch.
+        cell.child(div().w(2).h(COMMIT_ROW).flex_none().bg(laneColor(index)));
+      }
+      cells.push(cell);
+      if (index < width - 1) cells.push(div().w(4).h(COMMIT_ROW).flex_none());
+    }
+    const label = worktree.current
+      ? "Working tree changes"
+      : `Workspace changes · ${worktree.branch ?? "detached"}`;
+    const count = (value, color) =>
+      div().flex_none().text_size(9.5).text_color(value ? color : t.dim).child(`${value}`);
+    return h_flex()
+      .h(COMMIT_ROW)
+      .flex_none()
+      .px(8)
+      .gap(6)
+      .items_center()
+      .when(this.selectedWorktree === worktree.path, (e) => e.bg(t.selected))
+      .child(h_flex().h(COMMIT_ROW).flex_none().pl(2).children(cells))
+      .child(
+        h_flex()
+          .flex_1()
+          .min_w(0)
+          .gap(5)
+          .items_center()
+          .child(div().min_w(0).truncate().text_size(11.5).text_color(t.muted).child(label))
+          .child(count(`+${worktree.added ?? 0}`, t.ansi2))
+          .child(count(`~${worktree.modified ?? 0}`, t.ansi3))
+          .child(count(`-${worktree.deleted ?? 0}`, t.ansi1)),
+      )
+      .child(div().flex_none().text_size(9).text_color(t.dim).child(relativeTime(at, now)))
+      // Commits put the short hash after the date; the node reserves that cell so both dates line up.
+      .child(div().w(42).flex_none());
   }
 
   commitRow(commit, now, t, lane, connectTop, svgPath, svgWidth) {
@@ -1338,7 +1544,7 @@ export default class GitGraph extends View {
       )
       .when(Boolean(details && !details.error), (e) =>
         e
-          .child(this.messageBlock(details, t))
+          .child(details.kind === "worktree" ? this.worktreeBlock(details, t) : this.messageBlock(details, t))
           .child(
             div()
               .id("gitgraph-details-split")
@@ -1359,7 +1565,7 @@ export default class GitGraph extends View {
                 cx.notify();
               }),
           )
-          .child(this.filesBlock(details, t, cx)),
+          .child(details.kind === "worktree" ? this.worktreeFiles(details, t) : this.filesBlock(details, t, cx)),
       );
   }
 
@@ -1520,32 +1726,38 @@ export default class GitGraph extends View {
                             COMMIT_ROW,
                             (index) => {
                               const entry = entries[index];
-                              return entry ? `${index}:${entry.kind}:${entry.sha}` : `x:${index}`;
+                              if (!entry) return `x:${index}`;
+                              return entry.kind === "worktree"
+                                ? `${index}:worktree:`
+                                : `${index}:${entry.kind}:${entry.sha}`;
                             },
                             (range) => {
                               this.lastVisibleEnd = range.end;
-                              return entries.slice(range.start, range.end).map((entry) => {
+                              return entries.slice(range.start, range.end).map((entry, offset) => {
+                                const rowIndex = range.start + offset;
                                 try {
-                                  if (entry.kind === "pending") {
-                                    return this.uncommittedRow(
-                                      t,
-                                      entry.row?.lane ?? 0,
-                                      entry.pending.count,
-                                      entry.pending.branch,
-                                      entry.row,
-                                    );
+                                  if (entry.kind === "worktree") {
+                                      return this.worktreeRow(
+                                        t,
+                                        entry.worktree,
+                                        entry.row,
+                                        now,
+                                        entry.worktree?.current ? now : (entry.at ?? now),
+                                        Boolean(entry.link),
+                                        entry.dashLane ?? null,
+                                      );
                                   }
                                   return this.commitRow(
                                     entry.commit,
                                     now,
                                     t,
                                     entry.row,
-                                    entry.connectTop,
+                                    Boolean(entry.connectTop),
                                     this.rowPaths?.get(entry.commit.sha),
                                     this.rowWidths?.get(entry.commit.sha),
                                   );
                                 } catch (e) {
-                                  return div().p(6).text_size(11).text_color(t.ansi1).child(`row error: ${String(e?.message ?? e)}`);
+                                  return div().p(6).text_size(11).text_color(t.ansi1).child(`row error[${String(entry?.kind)}]: ${String(e?.message ?? e)}`);
                                 }
                               });
                             },
@@ -1553,7 +1765,8 @@ export default class GitGraph extends View {
                             .size_full()
                             .on_item_click((key, cx) => {
                               const parts = String(key).split(":");
-                              if (parts.length === 3 && parts[1] === "commit") this.select(parts[2], cx);
+                              if (parts[1] === "worktree") this.selectWorktree(Number(parts[0]), cx);
+                              else if (parts.length === 3 && parts[1] === "commit") this.select(parts[2], cx);
                             }),
                         )
                         .child(Scrollbar.vertical(this.listId).viewport_from_layout().absolute().inset_0()),

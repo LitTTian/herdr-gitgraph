@@ -5,7 +5,13 @@
 - 19 px rows: lane graph, branch badge, subject, relative time, short hash.
 - Branch tips show a rectangular badge with the branch name (oldest branch when several share the
   commit; the rest are summarised as `+N`).
-- Uncommitted worktrees get a dashed node above their HEAD commit, labelled with the branch.
+- The checked-out branch's node uses the current time, so it sorts above every commit; every other
+  worktree's node sits directly above its HEAD commit with a dashed link drawn down into that
+  commit node. A dirty worktree shows a solid dot inside its dashed ring. The label is followed by
+  `+added ~modified -deleted`; the newest changed-file mtime is right-aligned where commit dates
+  sit, and no hash is shown. Clicking a node opens its path, branch, HEAD and files.
+- Node rows keep the other lanes' vertical lines, so another branch's line is never cut off.
+- Lane 0 is reserved for the checked-out branch's history; other branches never reuse it.
 - Message starts right after the row's own graph, not at a fixed column.
 
 ## Virtualisation and paging

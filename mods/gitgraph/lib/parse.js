@@ -142,3 +142,43 @@ export function branchLabel(name, maxChars = 20) {
   if (shortened.length <= maxChars) return shortened;
   return `/${last.slice(0, Math.max(1, maxChars - 2))}…`;
 }
+
+// Counts working-tree states from `git status --porcelain=v1 -z`.
+export function parseStatusCounts(text) {
+  const counts = { added: 0, modified: 0, deleted: 0 };
+  const tokens = String(text ?? "").split("\0");
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (!token || token.length < 3) continue;
+    const x = token[0];
+    const y = token[1];
+    if (x === "R" || x === "C") i += 1; // the old path follows
+    if (x === "?" && y === "?") counts.added += 1;
+    else if (x === "A" || y === "A") counts.added += 1;
+    else if (x === "D" || y === "D") counts.deleted += 1;
+    else counts.modified += 1;
+  }
+  return counts;
+}
+
+// One entry per changed path, with the display letter (U for untracked) and its path.
+export function parseStatusPaths(text) {
+  const tokens = String(text ?? "").split("\0");
+  const files = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token.length < 4) continue;
+    const x = token[0];
+    const y = token[1];
+    const path = token.slice(3);
+    // A rename or copy carries its old path as the next token; it is not a separate change.
+    if (x === "R" || x === "C" || y === "R" || y === "C") i += 1;
+    let letter = "M";
+    if (x === "?") letter = "U";
+    else if (x === "A" || y === "A") letter = "A";
+    else if (x === "D" || y === "D") letter = "D";
+    else if (x === "R" || y === "R") letter = "R";
+    files.push({ status: letter, path });
+  }
+  return files;
+}
