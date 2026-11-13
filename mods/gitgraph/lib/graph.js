@@ -5,6 +5,21 @@
 
 export const MAX_LANES = 8;
 
+// One geometry for every row renderer: commit rows and worktree rows must not drift at any zoom,
+// so both take the lane pitch and padding from here instead of their own constants.
+export const LANE_PX = 14;
+export const LANE_GAP = 4;
+export const LANE_PAD = 2;
+export const LANE_PITCH = LANE_PX + LANE_GAP;
+
+export function laneCenter(lane) {
+  return LANE_PAD + lane * LANE_PITCH + LANE_PX / 2;
+}
+
+export function rowSvgWidth(lanes) {
+  return (Math.max(1, lanes) - 1) * LANE_PITCH + LANE_PX + LANE_PAD * 2;
+}
+
 function freeLane(lanes, start, reserved = null) {
   for (let lane = start; lane < lanes.length; lane++) {
     if (lane !== reserved && lanes[lane] == null) return lane;

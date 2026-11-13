@@ -81,6 +81,25 @@ async function maxMtime(paths, on) {
   }
 }
 
+// The identity git would use for a commit here, which is what an uncommitted node represents.
+export async function gitIdentity(root, on) {
+  const out = { name: null, email: null };
+  try {
+    const result = await git(["config", "--get-regexp", "^user\\.(name|email)$"], {
+      cwd: root,
+      on,
+      timeout: 10000,
+    });
+    for (const line of result.stdout.split("\n")) {
+      const match = line.match(/^user\.(name|email)\s+(.*)$/);
+      if (match) out[match[1]] = match[2].trim();
+    }
+  } catch {
+    // No configured identity: the details simply omit it.
+  }
+  return out;
+}
+
 export async function worktreeStats(root, on) {
   const worktrees = await loadWorktrees(root, on);
   const rows = [];
@@ -106,6 +125,7 @@ export async function worktreeStats(root, on) {
       files.slice(0, 100).map((file) => `${worktree.path}${tail}${file.path}`),
       on,
     );
+    const author = await gitIdentity(worktree.path, on);
     rows.push({
       path: worktree.path,
       head: worktree.head,
@@ -115,6 +135,7 @@ export async function worktreeStats(root, on) {
       deleted: counts.deleted,
       mtime,
       files,
+      author,
     });
   }
   return rows;

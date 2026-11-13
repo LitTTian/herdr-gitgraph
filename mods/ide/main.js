@@ -990,7 +990,9 @@ export default class Ide extends View {
       this.pendingDiff = requestedKey;
       cx.spawn(async (cx) => {
         this.pendingDiff = null;
-        await this.openDiff(requested, cx);
+        // A worktree file has no commit to diff against: open the file itself.
+        if (requested?.kind === "file" && typeof requested.file === "string") this.openFile(requested.file, cx);
+        else await this.openDiff(requested, cx);
       });
     }
     const target = this.target();

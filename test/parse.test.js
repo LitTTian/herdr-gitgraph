@@ -146,7 +146,14 @@ test("layoutGraph draws a merge connector to an extra parent lane", () => {
   assert.match(graphText(rows[0], 2), /●─╮/);
 });
 
-import { graphRuns, layoutGraph as layout, rowLaneWidth } from "../mods/gitgraph/lib/graph.js";
+import {
+  LANE_PITCH,
+  graphRuns,
+  laneCenter,
+  layoutGraph as layout,
+  rowLaneWidth,
+  rowSvgWidth,
+} from "../mods/gitgraph/lib/graph.js";
 import { avatarKey, avatarUrl } from "../mods/gitgraph/lib/avatar.js";
 
 test("graphRuns splits a row by lane for coloring", () => {
@@ -285,4 +292,16 @@ test("layoutGraph keeps the active tip's lane when another branch waits on it", 
     [0, 0],
   );
   assert.ok(rows.filter((row) => !mainline.has(row.sha)).every((row) => row.lane !== 0));
+});
+
+test("lane geometry is one integer grid for every row renderer", () => {
+  assert.equal(laneCenter(0), 9);
+  assert.equal(laneCenter(1), 27);
+  assert.equal(laneCenter(2), 45);
+  assert.equal(rowSvgWidth(1), 18);
+  assert.equal(rowSvgWidth(2), 36);
+  assert.equal(rowSvgWidth(4), 72);
+  // Any zoom multiplies these integers; no renderer has its own pitch or padding.
+  assert.equal(LANE_PITCH, 18);
+  assert.equal(laneCenter(3) - laneCenter(2), LANE_PITCH);
 });

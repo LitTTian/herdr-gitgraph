@@ -9,7 +9,8 @@
   worktree's node sits directly above its HEAD commit with a dashed link drawn down into that
   commit node. A dirty worktree shows a solid dot inside its dashed ring. The label is followed by
   `+added ~modified -deleted`; the newest changed-file mtime is right-aligned where commit dates
-  sit, and no hash is shown. Clicking a node opens its path, branch, HEAD and files.
+  sit, and no hash is shown. Clicking a node opens its configured git author, path, branch, HEAD and files; clicking a
+  changed file opens that file in the IDE pane (a new pane splits in when none is open).
 - Node rows keep the other lanes' vertical lines, so another branch's line is never cut off.
 - Lane 0 is reserved for the checked-out branch's history; other branches never reuse it.
 - Message starts right after the row's own graph, not at a fixed column.

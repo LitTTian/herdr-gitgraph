@@ -78,7 +78,9 @@ A panel keeps the folder it was created with; moving focus between terminals doe
   linked to it by a dashed line. A node with changes carries a solid dot inside the dashed ring.
   The label is followed by `+added ~modified -deleted`, and the newest changed-file time is
   right-aligned like a commit's date (no hash). Clicking a node shows its path, branch, HEAD and
-  files. Other branches' lane lines run through these rows instead of being cut off.
+  files, the git identity configured for the project, and clicking a changed file opens it in
+the editor. Other branches' lane lines run through
+  these rows instead of being cut off.
 - Lane 0 belongs to the checked-out branch only; commits outside its history never take it.
 - The list pages 200 commits at a time; the next page loads when you reach the bottom.
 - The right side shows the selected commit: author (avatar, name, email), date and hash, the
