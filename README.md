@@ -87,7 +87,8 @@ A panel keeps the folder it was created with; moving focus between terminals doe
 - The tree starts at the panel's folder; click a file to open it.
 - A single click opens an italic **preview** tab that the next click replaces; double-click or start
   editing to pin it.
-- Unsaved edits show a dot; `ctrl-s` saves the active file, `ctrl-shift-s` saves pinned dirty tabs.
+- Unsaved edits show a dot; the tab bar's **Save** button or `ctrl-s` saves the active file,
+  `ctrl-shift-s` saves pinned dirty tabs.
 - Clicking a changed file in gitgraph opens its diff here: in the IDE of the current tab, or in a
   new pane below when the tab has none.
 - Diffs are tabs too: reselecting one reloads `git show`; switch between several without losing

@@ -1,5 +1,6 @@
 // Fused file browser + editor for the Herdr app: a collapsible tree on the left, the editable
-// file on the right. No save button: a red dot marks unsaved edits and `ctrl-s` saves
+// file on the right. A red dot marks unsaved edits; the tab bar has a Save button and `ctrl-s`
+// saves
 // (`mod:ide` in keys.json). `props.root` pins the tree, `props.file` opens a file.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, Editor, EditorState, TextView } from "gpui-base";
@@ -81,6 +82,8 @@ export default class Ide extends View {
     this.handle = cx.focus_handle();
     this.diffMode = "unified";
     this.mdPreview = false;
+    this.mdText = "";
+    this.mdKey = "";
     const initial = props();
     const where = location();
     // The tree keeps the folder the IDE was created with; focus changes never move it.
@@ -348,8 +351,12 @@ export default class Ide extends View {
         // Rebaseline on the editor's own value: a mount-time normalization is not an edit.
         this.original = this.code.value();
         this.dirty = false;
+        this.mdText = text;
+        this.mdKey = hashText(path + text);
         this.code.on("change", (_event, cx) => {
           if (!this.code || this.fileLoading) return;
+          this.mdText = this.code.value();
+          this.mdKey = hashText(path + this.mdText);
           const dirty = this.code.value() !== this.original;
           if (dirty) {
             this.openFiles = pinTab(this.openFiles, path);
@@ -608,6 +615,23 @@ export default class Ide extends View {
                   cx.notify();
                 })
                 .child(this.mdPreview ? "Source" : "Preview"),
+            ),
+          )
+          .when(Boolean(this.file) && !diff, (e) =>
+            e.child(
+              div()
+                .id("ide-save")
+                .px(6)
+                .py(1)
+                .rounded(4)
+                .border_1()
+                .border_color(this.dirty ? t.accent : t.border)
+                .text_size(10.5)
+                .text_color(this.dirty ? t.accent : t.dim)
+                .cursor_pointer()
+                .hover((chip) => chip.bg(t.hover))
+                .on_click((_e, cx) => this.save(cx))
+                .child("Save"),
             ),
           )
           .when(Boolean(diff), (e) =>
@@ -1045,8 +1069,7 @@ export default class Ide extends View {
                   .px(14)
                   .py(10)
                   .child(
-                    TextView.markdown(`ide-md-${hashText(this.file + this.code.value())}`, this.code.value())
-                      .selectable(true),
+                    TextView.markdown(`ide-md-${this.mdKey}`, this.mdText).selectable(true),
                   ),
               ),
           )

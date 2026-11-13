@@ -8,3 +8,6 @@
 
 - A Markdown file opened in the IDE shows a Source/Preview switch at the right of the header.
   Preview renders the current text (including unsaved edits) read-only; Source is the editor.
+
+- A Save button sits at the right of the tab bar while a file is open; it is accent-colored when
+  the active file has unsaved edits and saves through the same path as `ctrl-s`.
