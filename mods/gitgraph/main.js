@@ -39,7 +39,6 @@ const DIFF_ROW = 18;
 const LIST_WIDTH = 360;
 const LIST_MIN = 115;
 const DETAILS_MIN = 300;
-const COMPACT_WIDTH = 600;
 const NO_COMMITS = "No commits yet";
 const LANE_COLORS = ["ansi6", "ansi4", "ansi2", "ansi5", "ansi3", "ansi1"];
 
@@ -96,7 +95,12 @@ export default class GitGraph extends View {
     this.note = null;
     this.listWidth = Math.max(LIST_MIN, Math.min(720, Number(localStorage.getItem("gitgraph.listWidth")) || LIST_WIDTH));
     this.width = 0;
+    // Right mode: height of the message/diff block. Bottom mode: whole details panel height.
     this.detailsHeight = Math.max(80, Number(localStorage.getItem("gitgraph.detailsHeight")) || 210);
+    this.bottomHeight = Math.max(120, Number(localStorage.getItem("gitgraph.bottomHeight")) || 260);
+    const placement = localStorage.getItem("gitgraph.detailsPlacement");
+    this.detailsPlacement = placement === "bottom" || placement === "hidden" ? placement : "right";
+    this.heightDrag = null;
     this.detailsDrag = null;
     this.fileView = localStorage.getItem("gitgraph.fileView") === "tree" ? "tree" : "list";
     this.closedDirs = new Set();
@@ -445,7 +449,7 @@ export default class GitGraph extends View {
     cx.notify();
   }
 
-  worktreeBlock(details, t) {
+  worktreeBlock(details, t, height = this.detailsHeight) {
     const worktree = details.worktree ?? {};
     const line = (label, value) =>
       h_flex()
@@ -455,7 +459,7 @@ export default class GitGraph extends View {
         .child(div().w(70).flex_none().text_color(t.dim).child(label))
         .child(div().min_w(0).truncate().text_color(t.foreground).child(value));
     return v_flex()
-      .h(this.detailsHeight)
+      .h(height)
       .flex_none()
       .min_h(0)
       .overflow_y_scroll()
@@ -1421,9 +1425,9 @@ export default class GitGraph extends View {
       );
   }
 
-  messageBlock(details, t) {
+  messageBlock(details, t, height = this.detailsHeight) {
     return v_flex()
-      .h(this.detailsHeight)
+      .h(height)
       .flex_none()
       .min_h(0)
       .overflow_y_scroll()
@@ -1602,16 +1606,48 @@ export default class GitGraph extends View {
       );
   }
 
-  detailsColumn(t, cx) {
+  placementChip(mode, t, cx) {
+    const active = this.detailsPlacement === mode;
+    // Herdr's own pane header icons: split-right for a side split, split-down for a bottom one.
+    const icon = mode === "bottom" ? "split-down" : "split-right";
+    return div()
+      .id(`gitgraph-placement-${mode}`)
+      .p(3)
+      .rounded(4)
+      .text_color(active ? t.accent : t.dim)
+      .cursor_pointer()
+      .hover((chip) => chip.bg(t.hover).text_color(active ? t.accent : t.foreground))
+      .on_click((_e, cx) => {
+        // Clicking the active button hides the details; another button brings them back.
+        this.detailsPlacement = this.detailsPlacement === mode ? "hidden" : mode;
+        localStorage.setItem("gitgraph.detailsPlacement", this.detailsPlacement);
+        cx.notify();
+      })
+      .child(svg(`mods/pane/${icon}.svg`).size(14));
+  }
+
+  endHeightResize(cx) {
+    if (!this.heightDrag) return;
+    localStorage.setItem("gitgraph.bottomHeight", String(this.bottomHeight));
+    this.heightDrag = null;
+    cx.notify();
+  }
+
+  detailsColumn(t, cx, bottom = false) {
     const details = this.details;
+    const paneH = this.height ?? 600;
+    const panelH = Math.min(Math.max(120, this.bottomHeight), Math.max(140, paneH - 120));
+    // Both modes must leave room for the file list, so neither value can swallow the column.
+    const splitLimit = Math.max(80, (bottom ? panelH - 100 : paneH - 140));
+    const messageHeight = Math.max(80, Math.min(this.detailsHeight, splitLimit));
     return v_flex()
-      .flex_1()
-      .h_full()
-      .min_w(DETAILS_MIN)
+      .when(bottom, (e) => e.w_full().h(panelH).flex_none())
+      .when(!bottom, (e) => e.flex_1().h_full().min_w(DETAILS_MIN))
       .min_h(0)
       .on_mouse_move((e, cx) => {
         if (!this.detailsDrag) return;
-        const limit = Math.max(80, (this.height ?? 600) - DETAILS_MIN);
+        const panelH = bottom ? this.bottomHeight : (this.height ?? 600);
+        const limit = Math.max(80, (bottom ? panelH - 100 : (this.height ?? 600) - 140));
         const next = Math.max(80, Math.min(limit, this.detailsDrag.height + (e.position.y - this.detailsDrag.y)));
         if (next === this.detailsHeight) return;
         this.detailsHeight = next;
@@ -1643,7 +1679,11 @@ export default class GitGraph extends View {
       )
       .when(Boolean(details && !details.error), (e) =>
         e
-          .child(details.kind === "worktree" ? this.worktreeBlock(details, t) : this.messageBlock(details, t))
+          .child(
+            details.kind === "worktree"
+              ? this.worktreeBlock(details, t, messageHeight)
+              : this.messageBlock(details, t, messageHeight),
+          )
           .child(
             div()
               .id("gitgraph-details-split")
@@ -1686,10 +1726,7 @@ export default class GitGraph extends View {
     const t = theme();
     const now = Math.floor(Date.now() / 1000);
     const entries = this.entries ?? [];
-    const narrow = this.width > 0 && this.width < COMPACT_WIDTH;
-    const listWidth = narrow
-      ? this.width
-      : Math.min(this.listWidth, Math.max(LIST_MIN, (this.width || 900) - DETAILS_MIN - 5));
+    const listWidth = Math.min(this.listWidth, Math.max(LIST_MIN, (this.width || 900) - DETAILS_MIN - 5));
     const blocked = Boolean(this.error) || Boolean(this.empty) || this.commits.length === 0;
     return v_flex()
       .id("gitgraph")
@@ -1772,41 +1809,19 @@ export default class GitGraph extends View {
             ),
           )
           .when(this.loading, (e) => e.child(div().text_size(11).text_color(t.dim).child("Loading…")))
+          .child(div().flex_1())
+          .child(this.placementChip("right", t, cx))
+          .child(this.placementChip("bottom", t, cx)),
       )
       .when(Boolean(this.note), (e) =>
         e.child(div().flex_none().px(14).py(6).text_size(11).text_color(t.ansi3).child(this.note)),
       )
       .when(blocked, (e) => e.child(this.placeholder(this.error ? `git: ${this.error}` : this.empty || "Loading…", t)))
-      .when(!blocked, (e) =>
-        e.child(
-          h_flex()
-            .flex_1()
-            .w_full()
-            .h_full()
-            .items_stretch()
-            .min_w(0)
-            .min_h(0)
-            .on_mouse_move((e, cx) => {
-              if (!this.dragStart) return;
-              const room = (this.width || 900) - DETAILS_MIN - 5;
-              const next = Math.max(LIST_MIN, Math.min(Math.max(LIST_MIN, Math.min(720, room)), this.dragStart.width + (e.position.x - this.dragStart.x)));
-              if (next === this.listWidth) return;
-              this.listWidth = next;
-              cx.notify();
-            })
-            .on_mouse_up("left", (_e, cx) => this.endResize(cx))
-            .on_mouse_down_out((_e, cx) => {
-              if (this.dragStart) this.endResize(cx);
-            })
-            .child(
-              v_flex()
-                .w(listWidth)
-                .h_full()
-                .flex_shrink(1)
-                .min_w(LIST_MIN)
+      .when(!blocked, (e) => {
+        const makeList = () =>
+          v_flex()
+                .min_w(0)
                 .min_h(0)
-                .border_r(1)
-                .border_color(t.border)
                 .child(
                   div()
                     .flex_1()
@@ -1875,27 +1890,90 @@ export default class GitGraph extends View {
                       .text_color(t.dim)
                       .child("Loading…"),
                   ),
-                ),
-            )
-            .when(!narrow, (e) =>
-              e.child(
+                );
+
+        if (this.detailsPlacement === "hidden") {
+          return e.child(makeList().w_full().flex_1().min_h(0));
+        }
+
+        if (this.detailsPlacement === "bottom") {
+          return e.child(
+            v_flex()
+              .flex_1()
+              .w_full()
+              .h_full()
+              .min_w(0)
+              .min_h(0)
+              .on_mouse_move((ev, cx) => {
+                if (!this.heightDrag) return;
+                const limit = Math.max(120, (this.height ?? 600) - 120);
+                const next = Math.max(120, Math.min(limit, this.heightDrag.height - (ev.position.y - this.heightDrag.y)));
+                if (next === this.bottomHeight) return;
+                this.bottomHeight = next;
+                cx.notify();
+              })
+              .on_mouse_up("left", (_e, cx) => this.endHeightResize(cx))
+              .on_mouse_down_out((_e, cx) => {
+                if (this.heightDrag) this.endHeightResize(cx);
+              })
+              .child(makeList().w_full().flex_1().min_h(0).border_b(1).border_color(t.border))
+              .child(
                 div()
+                  .id("gitgraph-hsplit")
+                  .h(5)
+                  .w_full()
+                  .flex_none()
+                  .cursor_row_resize()
+                  .bg(this.heightDrag ? t.accent : t.border)
+                  .on_mouse_down("left", (ev, cx) => {
+                    cx.stop_propagation();
+                    this.heightDrag = { y: ev.position.y, height: this.bottomHeight };
+                    cx.notify();
+                  })
+                  .on_mouse_up("left", (_e, cx) => this.endHeightResize(cx)),
+              )
+              .child(this.detailsColumn(t, cx, true)),
+          );
+        }
+
+        return e.child(
+          h_flex()
+            .flex_1()
+            .w_full()
+            .h_full()
+            .items_stretch()
+            .min_w(0)
+            .min_h(0)
+            .on_mouse_move((ev, cx) => {
+              if (!this.dragStart) return;
+              const room = (this.width || 900) - DETAILS_MIN - 5;
+              const next = Math.max(LIST_MIN, Math.min(Math.max(LIST_MIN, Math.min(720, room)), this.dragStart.width + (ev.position.x - this.dragStart.x)));
+              if (next === this.listWidth) return;
+              this.listWidth = next;
+              cx.notify();
+            })
+            .on_mouse_up("left", (_e, cx) => this.endResize(cx))
+            .on_mouse_down_out((_e, cx) => {
+              if (this.dragStart) this.endResize(cx);
+            })
+            .child(makeList().w(listWidth).flex_none().border_r(1).border_color(t.border))
+            .child(
+              div()
                 .id("gitgraph-split")
                 .w(5)
                 .h_full()
                 .flex_none()
                 .cursor_col_resize()
                 .bg(this.dragStart ? t.accent : t.border)
-                .on_mouse_down("left", (e, cx) => {
+                .on_mouse_down("left", (ev, cx) => {
                   cx.stop_propagation();
-                  this.dragStart = { x: e.position.x, width: this.listWidth };
+                  this.dragStart = { x: ev.position.x, width: this.listWidth };
                   cx.notify();
                 })
                 .on_mouse_up("left", (_e, cx) => this.endResize(cx)),
-              ),
             )
-            .when(!narrow, (e) => e.child(this.detailsColumn(t, cx))),
-        ),
-      );
+            .child(this.detailsColumn(t, cx)),
+        );
+      });
   }
 }

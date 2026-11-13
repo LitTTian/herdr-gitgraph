@@ -19,3 +19,15 @@ Commit rows and worktree rows are generated SVGs with the same coordinates:
 vertical bleed, with lane centers at `2 + 18L + 7`. Both are rendered by the same image path and
 cached per content, so changing the window zoom scales one integer grid instead of re-aligning
 separate painters. Keep new row graphics on that grid; do not add per-zoom offsets.
+
+## Details placement
+
+Two header buttons (Herdr's `mods/pane/split-right.svg` and `split-down.svg` icons) switch the
+details column between a right split and a bottom split; clicking the active button hides the
+details (`hidden`), and the choice is stored per pane (`gitgraph.detailsPlacement`). The drag
+handle between list and details resizes the list width, and in bottom mode dragging it up grows
+the panel. The splitter inside the details always resizes the message block, so the file list
+height follows in both modes. The right mode's message-block height
+(`gitgraph.detailsHeight`) and the bottom panel height (`gitgraph.bottomHeight`) persist separately
+and are clamped against the pane, so switching modes can never hide the file list. There is no width cutoff that hides the
+details: list and details always share the pane.

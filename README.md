@@ -73,6 +73,9 @@ A panel keeps the folder it was created with; moving focus between terminals doe
 
 - Rows show the lane graph, branch badge, subject, relative time and short hash. 19 px tall.
 - Branch tips carry a badge; several tips on one commit show the oldest branch and `+N`.
+- The header's two split buttons (Herdr's panel icons) place the details pane on the right or along
+  the bottom; clicking the active one hides the details, clicking again brings them back. The list
+  and details always share the pane, whatever its width.
 - Working-tree changes appear as dashed nodes. The checked-out branch's node has the current time,
   so it stays above every commit; each other worktree's node sits directly above its HEAD commit,
   linked to it by a dashed line. A node with changes carries a solid dot inside the dashed ring.
